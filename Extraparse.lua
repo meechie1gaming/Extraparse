@@ -9,17 +9,19 @@
 --#   |  | (   |   Meechie  | /
 --#   )  |  \  `.___________|/
 --================================================================================
--- Extraparse LUA - v1.1.0 Date: 2026-10-28
+-- Extraparse LUA - v2.0.0 Date: 2026-10-28
 --================================================================================
 
 _addon.name     = 'Extraparse'
 _addon.author   = 'Meechie'
-_addon.version  = '1.1.0'
+_addon.version  = '2.0.0'
 _addon.commands = {'extraparse', 'ep'}
 
 require('pack')
 local packets = require('packets')
 local res = require('resources')
+local texts = require('texts')
+local config = require('config')
 
 -- ==[ Bosses ]================================================
 local bosses = {
@@ -33,17 +35,46 @@ local bosses = {
     ['Triboulex'] = true,
 }
 
+local sortie_zones = {
+    [133] = true,
+    [189] = true,
+    [275] = true,
+}
+
 -- ==[ Timing ]================================================
 local idle_timeout = 90
 local cast_lead = 3
 local dead_window = 60
-local parse_delay = 1
-
--- ==[ Hit Log ]===============================================
-local hit_log = true
-local stamp_buffs = true
 local flush_interval = 1
 local luopan_grace = 5
+local line_delay = 1.5
+
+-- ==[ Output ]================================================
+local stamp_buffs = true
+
+-- ==[ HUD ]===================================================
+local hud_on = true
+
+local hud_watch = {
+    {'Haste', {'Haste', 'Geo Haste'}},
+    {'March', {'March'}},
+}
+
+local melee_jobs = {
+    WAR = true, MNK = true, THF = true, PLD = true, DRK = true,
+    BST = true, RNG = true, SAM = true, NIN = true, DRG = true,
+    BLU = true, COR = true, PUP = true, DNC = true, RUN = true,
+}
+
+local defaults = {
+    hud = {
+        pos = {x = 100, y = 300},
+        bg = {alpha = 170, red = 0, green = 0, blue = 0},
+        text = {size = 10, font = 'Consolas', red = 255, green = 255, blue = 255},
+        padding = 4,
+        flags = {draggable = true},
+    },
+}
 
 -- ==[ Player Debuffs ]========================================
 local player_debuffs = {
@@ -122,7 +153,7 @@ local msg_removed = set{
     378, 453, 531, 647, 805, 806,
 }
 
-local msg_death = set{6, 20, 113, 406, 605, 646}
+local msg_death = set{6, 20, 97, 113, 406, 605, 646}
 
 local msg_ability_status = set{100, 420, 421, 424}
 
@@ -138,6 +169,14 @@ local msg_daze = {
 }
 
 local msg_roll = set{420, 424}
+
+local msg_resist = set{85, 284, 653, 654, 655, 656}
+
+local msg_immunobreak = set{653, 654}
+
+local msg_no_effect = set{75, 156, 189, 283, 323, 659}
+
+local raise_spells = set{'Raise', 'Raise II', 'Raise III', 'Arise'}
 
 local ja_categories = set{6, 14, 15}
 
@@ -159,6 +198,25 @@ local msg_spikes = {
     [33] = 'counter',
     [44] = 'spikes',
     [536] = 'retaliation',
+}
+
+local taken_results = {
+    [14] = 'counter',
+    [15] = 'evade',
+    [30] = 'anticipate',
+    [31] = 'shadow',
+    [32] = 'evade',
+    [33] = 'counter',
+    [63] = 'evade',
+    [70] = 'parry',
+    [106] = 'intimidate',
+    [158] = 'miss',
+    [188] = 'miss',
+    [245] = 'miss',
+    [282] = 'evade',
+    [324] = 'miss',
+    [354] = 'miss',
+    [658] = 'miss',
 }
 
 local skillchains = {
@@ -192,7 +250,40 @@ local melee_hands = {
     [4] = 'Daken',
 }
 
+-- ==[ Tables ]================================================
+local tables = {
+    hits = {'boss', 'fight', 'time', 'attacker', 'pet', 'type', 'action', 'damage', 'crit', 'miss', 'burst', 'tp', 'packet', 'buffs', 'debuffs'},
+    taken = {'boss', 'fight', 'time', 'player', 'type', 'source', 'damage', 'result', 'effect', 'buffs'},
+    boss_moves = {'boss', 'fight', 'time', 'move', 'type', 'targets', 'players_hit', 'damage', 'effects'},
+    enfeebles = {'boss', 'fight', 'time', 'caster', 'action', 'debuff', 'result'},
+    deaths = {'boss', 'fight', 'time', 'player', 'event', 'by', 'detail'},
+    boss_hp = {'boss', 'fight', 'time', 'hpp'},
+    fights = {'boss', 'fight', 'start', 'end', 'length', 'result', 'party_damage', 'party_dps', 'deaths'},
+    damage = {
+        'boss', 'fight', 'player', 'damage', 'dps', 'share',
+        'melee', 'melee_hits', 'melee_misses', 'melee_crits', 'accuracy', 'crit_rate', 'rounds', 'hits_per_round',
+        'ranged', 'ranged_hits', 'ranged_misses', 'ranged_crits',
+        'ws', 'ws_count', 'ws_misses', 'ws_avg', 'ws_max', 'ws_avg_tp',
+        'ja', 'spell', 'spells', 'bursts', 'burst_damage', 'skillchain', 'skillchains',
+        'add_effect', 'pet', 'counter', 'other',
+    },
+    defense = {
+        'boss', 'fight', 'player', 'damage_taken', 'melee_taken', 'ability_taken', 'spell_taken',
+        'melee_attacks', 'hits', 'crits', 'blocks', 'parries', 'evades', 'shadows', 'anticipates', 'counters',
+        'ability_hits', 'resists', 'effects',
+    },
+    buff_summary = {'boss', 'fight', 'player', 'buff', 'uptime', 'seconds', 'drops', 'longest_gap'},
+    buff_windows = {'boss', 'fight', 'player', 'buff', 'on', 'off', 'dropped'},
+    buff_casts = {'boss', 'fight', 'time', 'player', 'buff', 'by', 'via', 'value'},
+    debuff_summary = {'boss', 'fight', 'debuff', 'uptime', 'seconds', 'landed'},
+    debuff_windows = {'boss', 'fight', 'debuff', 'on', 'off', 'by', 'via', 'level'},
+    debuffs_taken = {'boss', 'fight', 'player', 'debuff', 'on', 'off', 'length', 'via'},
+    abilities = {'boss', 'fight', 'time', 'player', 'ability'},
+    run = {'run', 'start', 'end', 'length', 'fights', 'kills', 'deaths'},
+}
+
 -- ==[ State ]=================================================
+local settings = config.load(defaults)
 local db = {}
 local fights = {}
 local boss_status = {}
@@ -201,21 +292,30 @@ local casts = {}
 local ja_log = {}
 local names_by_id = {}
 local party = {}
-local dead = {}
-local self_pending = nil
-local last_tick = 0
+local party_mobs = {}
+local pet_owner = {}
+local jobs = {}
+local tp_hist = {}
 local current = {}
 local buff_stamps = {}
 local boss_stamps = {}
-local pet_owner = {}
-local party_mobs = {}
 local luopans = {}
-local hit_buf = {}
-local hit_file = nil
-local hit_name = nil
-local hit_rows = 0
+local dead = {}
+local dead_players = {}
+local last_hit_on = {}
+local last_view = nil
+local self_pending = nil
+local last_tick = 0
 local last_flush = 0
+local last_tp = 0
 local packet_seq = 0
+local bufs = {}
+local made = {}
+local run_dir = nil
+local run_name = nil
+local run_wall = os.time()
+local hud = nil
+local update_hud
 
 -- ==[ Helpers ]===============================================
 local function log(text)
@@ -245,8 +345,16 @@ local function boss_key(name)
     return (name:gsub(' ', '_'):gsub("'", ''))
 end
 
-local function fmt(n)
+local function f1(n)
     return string.format('%.1f', n)
+end
+
+local function f2(n)
+    return string.format('%.2f', n)
+end
+
+local function f0(n)
+    return string.format('%.0f', n)
 end
 
 local function clock(n)
@@ -258,6 +366,16 @@ local function pct(part, total)
     return total > 0 and part / total * 100 or 0
 end
 
+local function per(part, total)
+    return total > 0 and part / total or 0
+end
+
+local function short(n)
+    if n >= 1000000 then return string.format('%.2fM', n / 1000000) end
+    if n >= 1000 then return string.format('%.1fk', n / 1000) end
+    return string.format('%d', math.floor(n))
+end
+
 local function sorted(t)
     local keys = {}
     for k in pairs(t) do keys[#keys + 1] = k end
@@ -265,17 +383,85 @@ local function sorted(t)
     return keys
 end
 
+-- ==[ Run Files ]=============================================
+local function csv(v)
+    if v == nil then return '' end
+    v = tostring(v)
+    if v:find('[,"\r\n]') then v = '"'..(v:gsub('"', '""'))..'"' end
+    return v
+end
+
+local function put(name, ...)
+    local n = select('#', ...)
+    local out = {}
+    for i = 1, n do out[i] = csv((select(i, ...))) end
+    local b = bufs[name]
+    if not b then
+        b = {}
+        bufs[name] = b
+    end
+    b[#b + 1] = table.concat(out, ',')
+end
+
+local function ensure_run()
+    if run_dir then return end
+    local data_dir = windower.addon_path..'data/'
+    local runs_dir = data_dir..'runs/'
+    if not windower.dir_exists(data_dir) then windower.create_dir(data_dir) end
+    if not windower.dir_exists(runs_dir) then windower.create_dir(runs_dir) end
+    local name = os.date('%Y-%m-%d')
+    local final, n = name, 1
+    while windower.dir_exists(runs_dir..final) do
+        n = n + 1
+        final = name..'_'..n
+    end
+    windower.create_dir(runs_dir..final)
+    run_dir = runs_dir..final..'/'
+    run_name = final
+    made = {}
+    log('Saving this run to data/runs/'..final)
+end
+
+local function flush_all()
+    local any = false
+    for _, b in pairs(bufs) do
+        if #b > 0 then
+            any = true
+            break
+        end
+    end
+    if not any then return end
+    ensure_run()
+    for name, b in pairs(bufs) do
+        if #b > 0 then
+            local file = io.open(run_dir..name..'.csv', 'a')
+            if file then
+                if not made[name] then
+                    file:write(table.concat(tables[name], ','), '\n')
+                    made[name] = true
+                end
+                file:write(table.concat(b, '\n'), '\n')
+                file:close()
+            elseif not made['!'..name] then
+                made['!'..name] = true
+                log('Could not write '..name..'.csv')
+            end
+            bufs[name] = {}
+        end
+    end
+end
+
 -- ==[ Party ]=================================================
 local function refresh_party()
     local p = windower.ffxi.get_party()
     party = {}
-    pet_owner = {}
     party_mobs = {}
+    pet_owner = {}
     if not p then return end
     for i = 0, 5 do
         local m = p['p'..i]
         if m and m.name then
-            party[m.name] = true
+            party[m.name] = m
             if m.mob then
                 party_mobs[m.name] = m.mob
                 if m.mob.id then names_by_id[m.mob.id] = m.name end
@@ -283,6 +469,8 @@ local function refresh_party()
             end
         end
     end
+    local me = windower.ffxi.get_player()
+    if me and me.name and me.main_job then jobs[me.name] = me.main_job end
 end
 
 local function mob_name(id)
@@ -293,6 +481,37 @@ end
 
 local function is_boss(m)
     return (m and m.is_npc and bosses[m.name]) and true or false
+end
+
+local function is_melee(name)
+    return jobs[name] and melee_jobs[jobs[name]] or false
+end
+
+-- ==[ TP ]====================================================
+local function tp_sample(name, tp, now)
+    local h = tp_hist[name]
+    if not h then
+        h = {}
+        tp_hist[name] = h
+    end
+    local last = h[#h]
+    if last and last.tp == tp then return end
+    h[#h + 1] = {t = now, tp = tp}
+    if #h > 8 then table.remove(h, 1) end
+end
+
+local function tp_at(name, now)
+    local h = tp_hist[name]
+    if not h or #h == 0 then return nil end
+    local best
+    for i = #h, 1, -1 do
+        local e = h[i]
+        if e.t <= now then
+            best = math.max(best or 0, e.tp)
+            if e.t < now - 3 then break end
+        end
+    end
+    return best
 end
 
 -- ==[ Buff Timeline ]=========================================
@@ -486,53 +705,35 @@ local function coverage(list, a, b)
     return up, gap
 end
 
-local function player_entry(r, name)
-    local p = r.players[name]
-    if not p then
-        p = {buffs = {}, taken = {}, landed = {}, abilities = {}}
-        r.players[name] = p
-    end
-    return p
-end
-
 local function build_result(f, finish, outcome)
     local a, b = f.start, finish
     local r = {wall = f.wall_start, length = b - a, outcome = outcome, debuffs = {}, players = {}}
-
-    for name in pairs(f.roster) do player_entry(r, name) end
 
     for status, rec in pairs(boss_status[f.id] or {}) do
         local list = clip(rec, a, b)
         local up = coverage(list, a, b)
         local windows = {}
         for _, iv in ipairs(list) do
-            windows[#windows + 1] = {on = iv.on - a, off = iv.off - a}
+            local src
+            for _, l in ipairs(rec.landings) do
+                if l.t <= iv.raw_on + 0.01 then src = l end
+            end
+            windows[#windows + 1] = {
+                on = iv.on - a,
+                off = iv.off - a,
+                by = src and src.by,
+                via = src and src.via,
+                level = src and src.level,
+            }
         end
         if up > 0 or #rec.landings > 0 then
             r.debuffs[status] = {seconds = up, landed = #rec.landings, windows = windows}
         end
-        for _, l in ipairs(rec.landings) do
-            if l.by and f.roster[l.by] then
-                local off = b
-                for _, iv in ipairs(list) do
-                    if l.t >= iv.on - 0.01 and l.t <= iv.off then
-                        off = iv.off
-                        break
-                    end
-                end
-                local p = player_entry(r, l.by)
-                local entries = p.landed[status]
-                if not entries then
-                    entries = {}
-                    p.landed[status] = entries
-                end
-                entries[#entries + 1] = {t = l.t - a, via = l.via, off = off - a}
-            end
-        end
     end
 
     for name in pairs(f.roster) do
-        local p = player_entry(r, name)
+        local p = {buffs = {}, taken = {}, abilities = {}}
+        r.players[name] = p
         local tl = timeline[name] or {}
         local pc = casts[name] or {}
         local statuses = {}
@@ -560,34 +761,105 @@ local function build_result(f, finish, outcome)
                 local cl = {}
                 for _, c in ipairs(entries) do
                     if c.t >= from and c.t <= b then
-                        cl[#cl + 1] = {by = c.by, via = c.via, t = c.t - a}
+                        cl[#cl + 1] = {by = c.by, via = c.via, value = c.value, t = c.t - a}
                     end
                 end
                 local up, gap = coverage(list, a, b)
                 if up > 0 or #cl > 0 then
-                    local drops = 0
+                    local drops, windows = 0, {}
                     for _, iv in ipairs(list) do
                         if iv.dropped then drops = drops + 1 end
+                        windows[#windows + 1] = {on = iv.on - a, off = iv.off - a, dropped = iv.dropped}
                     end
-                    p.buffs[status] = {seconds = up, drops = drops, gap = gap, casts = cl}
+                    p.buffs[status] = {seconds = up, drops = drops, gap = gap, casts = cl, windows = windows}
                 end
             end
         end
     end
 
     for _, e in ipairs(ja_log) do
-        if e.t >= a and e.t <= b and f.roster[e.name] then
-            local p = player_entry(r, e.name)
-            local list = p.abilities[e.ability]
-            if not list then
-                list = {}
-                p.abilities[e.ability] = list
-            end
-            list[#list + 1] = e.t - a
+        if e.t >= a and e.t <= b and r.players[e.name] then
+            local list = r.players[e.name].abilities
+            list[#list + 1] = {t = e.t - a, ability = e.ability}
         end
     end
 
     return r
+end
+
+-- ==[ Fight Files ]===========================================
+local function party_total(f)
+    local total = 0
+    for _, s in pairs(f.stats) do total = total + s.damage end
+    return total
+end
+
+local function write_damage(f, len, total)
+    for _, name in ipairs(sorted(f.stats)) do
+        local s = f.stats[name]
+        local swings = s.melee_hits + s.melee_misses
+        put('damage', f.key, f.index, name, s.damage, f0(per(s.damage, len)), f1(pct(s.damage, total)),
+            s.melee, s.melee_hits, s.melee_misses, s.melee_crits, f1(pct(s.melee_hits, swings)), f1(pct(s.melee_crits, s.melee_hits)),
+            s.rounds, f2(per(s.swings, s.rounds)),
+            s.ranged, s.ranged_hits, s.ranged_misses, s.ranged_crits,
+            s.ws, s.ws_count, s.ws_misses, f0(per(s.ws, s.ws_count)), s.ws_max, f0(per(s.ws_tp, s.ws_tp_count)),
+            s.ja, s.spell, s.spells, s.bursts, s.burst_damage, s.skillchain, s.skillchains,
+            s.add_effect, s.pet, s.counter, s.other)
+    end
+end
+
+local function write_defense(f)
+    for _, name in ipairs(sorted(f.def)) do
+        local d = f.def[name]
+        put('defense', f.key, f.index, name, d.taken, d.melee_taken, d.ability_taken, d.spell_taken,
+            d.melee_attacks, d.hits, d.crits, d.blocks, d.parries, d.evades, d.shadows, d.anticipates, d.counters,
+            d.ability_hits, d.resists, d.effects)
+    end
+end
+
+local function write_debuffs(f, r)
+    for _, status in ipairs(sorted(r.debuffs)) do
+        local d = r.debuffs[status]
+        put('debuff_summary', f.key, f.index, status, f1(pct(d.seconds, r.length)), f1(d.seconds), d.landed)
+        for _, w in ipairs(d.windows) do
+            put('debuff_windows', f.key, f.index, status, f1(w.on), f1(w.off), w.by, w.via, w.level)
+        end
+    end
+end
+
+local function write_players(f, r)
+    for _, name in ipairs(sorted(r.players)) do
+        local p = r.players[name]
+        for _, status in ipairs(sorted(p.buffs)) do
+            local b = p.buffs[status]
+            put('buff_summary', f.key, f.index, name, status, f1(pct(b.seconds, r.length)), f1(b.seconds), b.drops, f1(b.gap))
+            for _, w in ipairs(b.windows) do
+                put('buff_windows', f.key, f.index, name, status, f1(w.on), f1(w.off), w.dropped and 1 or 0)
+            end
+            for _, c in ipairs(b.casts) do
+                put('buff_casts', f.key, f.index, f1(c.t), name, status, c.by, c.via, c.value)
+            end
+        end
+        for _, status in ipairs(sorted(p.taken)) do
+            for _, inst in ipairs(p.taken[status]) do
+                put('debuffs_taken', f.key, f.index, name, status, f1(inst.on), f1(inst.off), f1(inst.off - inst.on), inst.via)
+            end
+        end
+        for _, u in ipairs(p.abilities) do
+            put('abilities', f.key, f.index, f1(u.t), name, u.ability)
+        end
+    end
+end
+
+local function write_fight(f, r)
+    local total = party_total(f)
+    local len = r.length
+    put('fights', f.key, f.index, os.date('%H:%M:%S', r.wall), os.date('%H:%M:%S', r.wall + math.floor(len + 0.5)),
+        f1(len), r.outcome, total, f0(per(total, len)), #f.deaths)
+    write_damage(f, len, total)
+    write_defense(f)
+    write_debuffs(f, r)
+    write_players(f, r)
 end
 
 -- ==[ Fights ]================================================
@@ -610,6 +882,9 @@ local function touch_boss(m, now)
             last = now,
             wall_start = os.time(),
             roster = {},
+            stats = {},
+            def = {},
+            deaths = {},
         }
         for n in pairs(party) do f.roster[n] = true end
         fights[m.id] = f
@@ -617,6 +892,14 @@ local function touch_boss(m, now)
         log(m.name..' engaged.')
     end
     f.last = now
+end
+
+local function current_fight()
+    local best
+    for _, f in pairs(fights) do
+        if not best or f.last > best.last then best = f end
+    end
+    return best
 end
 
 local function prune()
@@ -643,64 +926,103 @@ local function prune()
     ja_log = {}
 end
 
--- ==[ Hit Writer ]============================================
-local hit_header = 'target,fight,time,attacker,pet,type,action,damage,crit,miss,burst,packet,buffs,debuffs'
-
-local function csv(v)
-    v = tostring(v or '')
-    if v:find('[,"\r\n]') then v = '"'..(v:gsub('"', '""'))..'"' end
-    return v
-end
-
-local function hit_path()
-    local data_dir = windower.addon_path..'data/'
-    local base = data_dir..'hits/'
-    if not windower.dir_exists(data_dir) then windower.create_dir(data_dir) end
-    if not windower.dir_exists(base) then windower.create_dir(base) end
-    local name = os.date('%Y-%m-%d')
-    local final, n = name, 1
-    while windower.file_exists(base..final..'.csv') do
-        n = n + 1
-        final = name..'_'..n
+local function end_fight(id, finish, killed)
+    local f = fights[id]
+    if not f then return end
+    for _, rec in pairs(boss_status[id] or {}) do close_status(rec, finish) end
+    local r = build_result(f, finish, killed and 'killed' or 'not killed')
+    r.deaths = #f.deaths
+    write_fight(f, r)
+    fights[id] = nil
+    boss_status[id] = nil
+    boss_stamps[id] = nil
+    if killed then dead[id] = finish end
+    local entry = db[f.key]
+    if not entry then
+        entry = {name = f.name, kills = {}}
+        db[f.key] = entry
     end
-    return base..final..'.csv', final..'.csv'
+    entry.kills[#entry.kills + 1] = r
+    last_view = {f = f, r = r}
+    log(string.format('%s %s, %s.', f.name, killed and 'defeated' or 'fight closed', clock(r.length)))
+    flush_all()
+    prune()
+    if update_hud then update_hud() end
 end
 
-local function flush_hits()
-    if #hit_buf == 0 then return end
-    local new = not hit_file
-    if new then hit_file, hit_name = hit_path() end
-    local file = io.open(hit_file, 'a')
-    if not file then
-        log('Could not write '..hit_name)
-        hit_buf = {}
-        return
+-- ==[ Damage Dealt ]==========================================
+local function stat(f, name)
+    local s = f.stats[name]
+    if not s then
+        s = {
+            damage = 0, melee = 0, melee_hits = 0, melee_misses = 0, melee_crits = 0, rounds = 0, swings = 0,
+            ranged = 0, ranged_hits = 0, ranged_misses = 0, ranged_crits = 0,
+            ws = 0, ws_count = 0, ws_misses = 0, ws_max = 0, ws_tp = 0, ws_tp_count = 0,
+            ja = 0, spell = 0, spells = 0, bursts = 0, burst_damage = 0, skillchain = 0, skillchains = 0,
+            add_effect = 0, pet = 0, counter = 0, other = 0,
+        }
+        f.stats[name] = s
     end
-    if new then file:write(hit_header, '\n') end
-    file:write(table.concat(hit_buf, '\n'), '\n')
-    file:close()
-    hit_buf = {}
-    if new then log('Logging hits to '..hit_name) end
+    return s
 end
 
-local function add_hit(f, now, who, pet, kind, action, damage, crit, miss, burst)
-    hit_rows = hit_rows + 1
-    hit_buf[#hit_buf + 1] = table.concat({
-        csv(f.key),
-        f.index,
-        string.format('%.2f', now - f.start),
-        csv(who),
-        csv(pet),
-        kind,
-        csv(action),
-        damage or 0,
-        crit and 1 or 0,
-        miss and 1 or 0,
-        burst and 1 or 0,
-        packet_seq,
-        (stamp_buffs and not pet) and csv(buff_stamp(who)) or '',
-        stamp_buffs and csv(debuff_stamp(f.id)) or '',
-    }, ',')
+local function add_hit(f, now, who, pet, kind, action, damage, crit, miss, burst, tp)
+    damage = damage or 0
+    put('hits', f.key, f.index, f2(now - f.start), who, pet, kind, action, damage,
+        crit and 1 or 0, miss and 1 or 0, burst and 1 or 0, tp, packet_seq,
+        (stamp_buffs and not pet) and buff_stamp(who) or nil,
+        stamp_buffs and debuff_stamp(f.id) or nil)
+    local s = stat(f, who)
+    s.damage = s.damage + damage
+    if pet then
+        s.pet = s.pet + damage
+    elseif kind == 'melee' then
+        if miss then
+            s.melee_misses = s.melee_misses + 1
+        else
+            s.melee_hits = s.melee_hits + 1
+            s.melee = s.melee + damage
+            if crit then s.melee_crits = s.melee_crits + 1 end
+        end
+    elseif kind == 'ranged' then
+        if miss then
+            s.ranged_misses = s.ranged_misses + 1
+        else
+            s.ranged_hits = s.ranged_hits + 1
+            s.ranged = s.ranged + damage
+            if crit then s.ranged_crits = s.ranged_crits + 1 end
+        end
+    elseif kind == 'ws' then
+        if miss then
+            s.ws_misses = s.ws_misses + 1
+        else
+            s.ws_count = s.ws_count + 1
+            s.ws = s.ws + damage
+            s.ws_max = math.max(s.ws_max, damage)
+        end
+        if tp then
+            s.ws_tp = s.ws_tp + tp
+            s.ws_tp_count = s.ws_tp_count + 1
+        end
+    elseif kind == 'ja' then
+        s.ja = s.ja + damage
+    elseif kind == 'spell' then
+        s.spell = s.spell + damage
+        if not miss then s.spells = s.spells + 1 end
+        if burst then
+            s.bursts = s.bursts + 1
+            s.burst_damage = s.burst_damage + damage
+        end
+    elseif kind == 'skillchain' then
+        s.skillchain = s.skillchain + damage
+        s.skillchains = s.skillchains + 1
+    elseif kind == 'add_effect' then
+        s.add_effect = s.add_effect + damage
+    elseif kind == 'counter' or kind == 'spikes' or kind == 'retaliation' then
+        s.counter = s.counter + damage
+    else
+        s.other = s.other + damage
+    end
 end
 
 local function hit_kind(cat, msg)
@@ -716,22 +1038,25 @@ end
 
 local function log_hits(act, ctx, who, pet)
     local kind = hit_kind(act.category, ctx.msg1)
+    local tp = (kind == 'ws' and not pet) and tp_at(who, ctx.now) or nil
     for _, t in ipairs(act.targets) do
         local f = fights[t.id]
         if f then
+            local swings = 0
             for _, a in ipairs(t.actions) do
                 local msg = a.message
                 if kind and (msg_hit[msg] or msg_miss[msg]) then
                     local action = ctx.via
                     if act.category == 1 then
                         action = melee_hands[a.animation] or 'Main'
+                        swings = swings + 1
                     elseif msg == 157 then
                         action = 'Barrage'
                     elseif msg == 77 then
                         action = 'Sange'
                     end
                     local miss = msg_miss[msg]
-                    add_hit(f, ctx.now, who, pet, kind, action, miss and 0 or a.param, msg_crit[msg], miss, msg_burst[msg])
+                    add_hit(f, ctx.now, who, pet, kind, action, miss and 0 or a.param, msg_crit[msg], miss, msg_burst[msg], tp)
                 end
                 if a.has_add_effect and a.add_effect_message ~= 0 then
                     local am = a.add_effect_message
@@ -741,6 +1066,11 @@ local function log_hits(act, ctx, who, pet)
                         add_hit(f, ctx.now, who, pet, 'add_effect', 'Additional effect', a.add_effect_param)
                     end
                 end
+            end
+            if swings > 0 and not pet then
+                local s = stat(f, who)
+                s.rounds = s.rounds + 1
+                s.swings = s.swings + swings
             end
         end
     end
@@ -754,10 +1084,150 @@ local function log_spikes(act, ctx, targets, f)
                 local kind = a.has_spike_effect and msg_spikes[a.spike_effect_message]
                 if kind then
                     add_hit(f, ctx.now, name, nil, kind, (kind:gsub('^%l', string.upper)), a.spike_effect_param)
+                elseif a.message == 33 and a.param > 0 then
+                    add_hit(f, ctx.now, name, nil, 'counter', 'Counter', a.param)
                 end
             end
         end
     end
+end
+
+-- ==[ Deaths ]================================================
+local function player_died(name, now, killer, cause)
+    if dead_players[name] then return end
+    local f = current_fight()
+    if not f then return end
+    local tl = timeline[name]
+    if not cause and tl and tl['Doom'] and tl['Doom'].open then cause = 'Doom' end
+    local lh = last_hit_on[name]
+    if not cause and lh and now - lh.t < 10 then
+        cause = lh.source
+        killer = killer or lh.boss
+    end
+    dead_players[name] = {f = f, t = now}
+    f.deaths[#f.deaths + 1] = {name = name, cause = cause}
+    put('deaths', f.key, f.index, f2(now - f.start), name, 'died', killer or f.name, cause)
+end
+
+local function player_up(name, now)
+    local d = dead_players[name]
+    if not d then return end
+    dead_players[name] = nil
+    put('deaths', d.f.key, d.f.index, f2(now - d.f.start), name, 'up', nil, f1(now - d.t))
+end
+
+local function log_raise(act, ctx, targets)
+    if not (ctx.spell and raise_spells[ctx.spell.en]) then return end
+    for i in ipairs(act.targets) do
+        local name = targets[i].name
+        local d = name and dead_players[name]
+        if d then
+            put('deaths', d.f.key, d.f.index, f2(ctx.now - d.f.start), name, 'raise', ctx.actor, ctx.spell.en)
+        end
+    end
+end
+
+-- ==[ Damage Taken ]==========================================
+local function defense(f, name)
+    local d = f.def[name]
+    if not d then
+        d = {
+            taken = 0, melee_taken = 0, ability_taken = 0, spell_taken = 0,
+            melee_attacks = 0, hits = 0, crits = 0, blocks = 0, parries = 0, evades = 0,
+            shadows = 0, anticipates = 0, counters = 0, ability_hits = 0, resists = 0, effects = 0,
+        }
+        f.def[name] = d
+    end
+    return d
+end
+
+local function boss_kind(cat)
+    if cat == 1 then return 'melee'
+    elseif cat == 2 then return 'ranged'
+    elseif cat == 4 then return 'spell'
+    elseif cat == 3 or cat == 11 or cat == 13 or ja_categories[cat] then return 'ability'
+    end
+end
+
+local function taken_result(kind, a)
+    local msg = a.message
+    if a.has_spike_effect and (a.spike_effect_message == 33 or a.spike_effect_message == 14) then return 'counter', 0 end
+    if kind == 'melee' then
+        if a.reaction == 12 and (msg == 1 or msg == 67) then return 'block', a.param end
+        if a.reaction == 11 then return 'parry', 0 end
+        if msg == 1 then return 'hit', a.param end
+        if msg == 67 then return 'crit', a.param end
+    end
+    if taken_results[msg] then return taken_results[msg], 0 end
+    if msg_hit[msg] then return 'hit', a.param end
+    if msg_resist[msg] then return 'resist', 0 end
+    if msg_no_effect[msg] then return 'no_effect', 0 end
+    if msg_landed[msg] then return 'effect', 0, status_name(a.param) end
+    if msg_removed[msg] then return 'dispel', 0, status_name(a.param) end
+end
+
+local function log_boss_action(act, ctx, targets, f)
+    local kind = boss_kind(act.category)
+    if not kind then return end
+    local source = kind == 'melee' and 'Melee' or kind == 'ranged' and 'Ranged' or ctx.via or ('Ability '..act.param)
+    local hit, total, effects = {}, 0, {}
+    for i, t in ipairs(act.targets) do
+        local name = targets[i].name
+        local mine = name and party[name]
+        for _, a in ipairs(t.actions) do
+            if mine then
+                local result, damage, effect = taken_result(kind, a)
+                if a.has_add_effect and a.add_effect_message ~= 0 then
+                    local am = a.add_effect_message
+                    if msg_landed[am] then
+                        effect = status_name(a.add_effect_param)
+                    elseif msg_add_damage[am] then
+                        damage = (damage or 0) + a.add_effect_param
+                    end
+                end
+                if result then
+                    put('taken', f.key, f.index, f2(ctx.now - f.start), name, kind, source, damage, result, effect,
+                        stamp_buffs and buff_stamp(name) or nil)
+                    local d = defense(f, name)
+                    d.taken = d.taken + damage
+                    if kind == 'melee' then
+                        d.melee_taken = d.melee_taken + damage
+                        d.melee_attacks = d.melee_attacks + 1
+                        if result == 'hit' or result == 'crit' or result == 'block' then d.hits = d.hits + 1 end
+                        if result == 'crit' then d.crits = d.crits + 1 end
+                        if result == 'block' then d.blocks = d.blocks + 1 end
+                        if result == 'parry' then d.parries = d.parries + 1 end
+                    elseif kind == 'spell' then
+                        d.spell_taken = d.spell_taken + damage
+                    else
+                        d.ability_taken = d.ability_taken + damage
+                    end
+                    if kind ~= 'melee' and damage > 0 then d.ability_hits = d.ability_hits + 1 end
+                    if result == 'evade' then d.evades = d.evades + 1 end
+                    if result == 'shadow' then d.shadows = d.shadows + 1 end
+                    if result == 'anticipate' then d.anticipates = d.anticipates + 1 end
+                    if result == 'counter' then d.counters = d.counters + 1 end
+                    if result == 'resist' then d.resists = d.resists + 1 end
+                    if effect then d.effects = d.effects + 1 end
+                    if damage > 0 then
+                        last_hit_on[name] = {t = ctx.now, source = source, boss = f.name}
+                        total = total + damage
+                    end
+                    if damage > 0 or effect then hit[name] = true end
+                end
+                if effect then effects[effect] = true end
+                if msg_death[a.message] then player_died(name, ctx.now, f.name, source) end
+            elseif msg_landed[a.message] then
+                local s = status_name(a.param)
+                if s then effects[s] = true end
+            end
+        end
+    end
+    if kind ~= 'melee' then
+        put('boss_moves', f.key, f.index, f2(ctx.now - f.start), source, kind, #act.targets,
+            table.concat(sorted(hit), ';'), total, table.concat(sorted(effects), ';'))
+    end
+    log_spikes(act, ctx, targets, f)
 end
 
 -- ==[ Luopans ]===============================================
@@ -782,27 +1252,6 @@ local function check_luopans(now)
     end
 end
 
--- ==[ Fight End ]=============================================
-local function end_fight(id, finish, killed)
-    local f = fights[id]
-    if not f then return end
-    for _, rec in pairs(boss_status[id] or {}) do close_status(rec, finish) end
-    local r = build_result(f, finish, killed and 'killed' or 'not killed')
-    fights[id] = nil
-    boss_status[id] = nil
-    boss_stamps[id] = nil
-    if killed then dead[id] = finish end
-    local entry = db[f.key]
-    if not entry then
-        entry = {name = f.name, kills = {}}
-        db[f.key] = entry
-    end
-    entry.kills[#entry.kills + 1] = r
-    log(string.format('%s %s, %s.', f.name, killed and 'defeated' or 'fight closed', clock(r.length)))
-    flush_hits()
-    prune()
-end
-
 -- ==[ Action Packets ]========================================
 local function action_name(cat, param, msg)
     local r
@@ -824,6 +1273,13 @@ local function action_name(cat, param, msg)
     return r and r.en or nil
 end
 
+local function enfeeble(ctx, tid, status, result)
+    local f = fights[tid]
+    if f and party[ctx.actor] then
+        put('enfeebles', f.key, f.index, f2(ctx.now - f.start), ctx.actor, ctx.via, status, result)
+    end
+end
+
 local function handle_status(msg, param, ctx, tid, tname, tboss)
     local status, level, value
     if msg_landed[msg] then
@@ -840,10 +1296,18 @@ local function handle_status(msg, param, ctx, tid, tname, tboss)
 
     if status then
         if tboss then
-            if fights[tid] then boss_land(tid, status, ctx.actor, ctx.via, ctx.now, ctx.spell, level) end
+            if fights[tid] then
+                boss_land(tid, status, ctx.actor, ctx.via, ctx.now, ctx.spell, level)
+                enfeeble(ctx, tid, level and (status..' '..level) or status, 'landed')
+            end
         elseif tname and party[tname] then
             add_cast(tname, status, ctx.actor, ctx.via, ctx.now, value)
         end
+    elseif tboss and (msg_resist[msg] or msg_no_effect[msg]) then
+        local src = ctx.spell or ctx.ja
+        local s = src and src.status and status_name(src.status) or nil
+        local result = msg_immunobreak[msg] and 'immunobreak' or msg_resist[msg] and 'resisted' or 'no_effect'
+        enfeeble(ctx, tid, s, result)
     elseif msg_removed[msg] then
         if tboss and fights[tid] then
             local s = status_name(param)
@@ -888,14 +1352,15 @@ local function on_action(act)
         ja_log[#ja_log + 1] = {name = actor, ability = ctx.via, t = now}
     end
 
-    if hit_log and next(fights) then
+    if next(fights) then
         packet_seq = packet_seq + 1
         if party[actor] then
             log_hits(act, ctx, actor, nil)
+            log_raise(act, ctx, targets)
         elseif amob and amob.index and pet_owner[amob.index] then
             log_hits(act, ctx, pet_owner[amob.index], actor)
         elseif fights[act.actor_id] then
-            log_spikes(act, ctx, targets, fights[act.actor_id])
+            log_boss_action(act, ctx, targets, fights[act.actor_id])
         end
     end
 
@@ -919,9 +1384,17 @@ end
 local function on_message(data)
     local p = packets.parse('incoming', data)
     local msg, tid, aid, param = p['Message'], p['Target'], p['Actor'], p['Param 1']
+    local now = os.clock()
+    if msg_death[msg] then
+        local victim = names_by_id[tid]
+        if victim and party[victim] then
+            local killer = mob_name(aid)
+            player_died(victim, now, killer)
+            return
+        end
+    end
     local id = (fights[tid] and tid) or ((tid == 0 or tid == aid) and fights[aid] and aid) or nil
     if not id then return end
-    local now = os.clock()
     if msg_death[msg] then
         if id == tid then end_fight(id, now, true) end
     elseif msg_removed[msg] then
@@ -970,377 +1443,215 @@ end
 
 local function on_party_member(data)
     local p = packets.parse('incoming', data)
-    if p['ID'] and p['Name'] and p['Name'] ~= '' then
-        names_by_id[p['ID']] = p['Name']
-    end
-end
-
--- ==[ XML ]===================================================
-local function xml_tag(s)
-    s = tostring(s):gsub(' ', '_'):gsub('[^%w_%.%-]', '')
-    if s == '' or s:find('^[%d%.%-]') then s = '_'..s end
-    return s
-end
-
-local function xml_text(s)
-    return (tostring(s):gsub('&', '&amp;'):gsub('<', '&lt;'):gsub('>', '&gt;'))
-end
-
-local function writer()
-    local lines = {}
-    local w = {}
-    function w.open(d, tag)
-        lines[#lines + 1] = string.rep('    ', d)..'<'..tag..'>'
-    end
-    function w.close(d, tag)
-        lines[#lines + 1] = string.rep('    ', d)..'</'..tag..'>'
-    end
-    function w.leaf(d, tag, v)
-        if v ~= nil then
-            lines[#lines + 1] = string.rep('    ', d)..'<'..tag..'>'..xml_text(v)..'</'..tag..'>'
-        end
-    end
-    function w.text()
-        return table.concat(lines, '\n')
-    end
-    return w
-end
-
--- ==[ XML Fight ]=============================================
-local function write_fight(w, kills, total)
-    w.open(2, 'fight')
-    w.leaf(3, 'count', #kills)
-    w.leaf(3, 'length', fmt(total))
-    for i, k in ipairs(kills) do
-        local tag = 'fight_'..i
-        w.open(3, tag)
-        w.leaf(4, 'start', os.date('%H:%M:%S', k.wall))
-        w.leaf(4, 'end', os.date('%H:%M:%S', k.wall + math.floor(k.length + 0.5)))
-        w.leaf(4, 'length', fmt(k.length))
-        w.leaf(4, 'result', k.outcome)
-        w.close(3, tag)
-    end
-    w.close(2, 'fight')
-end
-
--- ==[ XML Boss Debuffs ]======================================
-local function write_boss_debuffs(w, kills, total, multi)
-    local agg = {}
-    for fi, k in ipairs(kills) do
-        for status, d in pairs(k.debuffs) do
-            local a = agg[status]
-            if not a then
-                a = {seconds = 0, landed = 0, windows = {}}
-                agg[status] = a
-            end
-            a.seconds = a.seconds + d.seconds
-            a.landed = a.landed + d.landed
-            for _, win in ipairs(d.windows) do
-                a.windows[#a.windows + 1] = {fight = fi, on = win.on, off = win.off}
-            end
-        end
-    end
-    if not next(agg) then return end
-    w.open(2, 'debuffs')
-    for _, status in ipairs(sorted(agg)) do
-        local a = agg[status]
-        local tag = xml_tag(status)
-        w.open(3, tag)
-        w.leaf(4, 'uptime', fmt(pct(a.seconds, total)))
-        w.leaf(4, 'seconds', fmt(a.seconds))
-        w.leaf(4, 'landed', a.landed)
-        for _, win in ipairs(a.windows) do
-            w.open(4, 'window')
-            if multi then w.leaf(5, 'fight', win.fight) end
-            w.leaf(5, 'on', fmt(win.on))
-            w.leaf(5, 'off', fmt(win.off))
-            w.close(4, 'window')
-        end
-        w.close(3, tag)
-    end
-    w.close(2, 'debuffs')
-end
-
--- ==[ XML Player Buffs ]======================================
-local function write_buffs(w, per, kills, present, multi)
-    local agg = {}
-    for fi = 1, #kills do
-        local p = per[fi]
-        if p then
-            for status, b in pairs(p.buffs) do
-                local a = agg[status]
-                if not a then
-                    a = {seconds = 0, drops = 0, gap = 0, casts = {}, seen = {}}
-                    agg[status] = a
-                end
-                a.seconds = a.seconds + b.seconds
-                a.drops = a.drops + b.drops
-                a.gap = math.max(a.gap, b.gap)
-                a.seen[fi] = true
-                for _, c in ipairs(b.casts) do
-                    a.casts[#a.casts + 1] = {fight = fi, by = c.by, via = c.via, t = c.t}
-                end
-            end
-        end
-    end
-    if not next(agg) then return end
-    w.open(3, 'buffs')
-    for _, status in ipairs(sorted(agg)) do
-        local a = agg[status]
-        for fi in pairs(per) do
-            if not a.seen[fi] then a.gap = math.max(a.gap, kills[fi].length) end
-        end
-        local tag = xml_tag(status)
-        w.open(4, tag)
-        w.leaf(5, 'uptime', fmt(pct(a.seconds, present)))
-        w.leaf(5, 'seconds', fmt(a.seconds))
-        w.leaf(5, 'drops', a.drops)
-        w.leaf(5, 'longest_gap', fmt(a.gap))
-        for _, c in ipairs(a.casts) do
-            w.open(5, 'cast')
-            if multi then w.leaf(6, 'fight', c.fight) end
-            w.leaf(6, 'time', fmt(c.t))
-            w.leaf(6, 'by', c.by)
-            w.leaf(6, 'via', c.via)
-            w.close(5, 'cast')
-        end
-        w.close(4, tag)
-    end
-    w.close(3, 'buffs')
-end
-
--- ==[ XML Debuffs Landed ]====================================
-local function write_landed(w, per, kills, multi)
-    local agg = {}
-    for fi = 1, #kills do
-        local p = per[fi]
-        if p then
-            for status, list in pairs(p.landed) do
-                agg[status] = agg[status] or {}
-                for _, l in ipairs(list) do
-                    agg[status][#agg[status] + 1] = {fight = fi, t = l.t, via = l.via, off = l.off}
-                end
-            end
-        end
-    end
-    if not next(agg) then return end
-    w.open(3, 'debuffs_landed')
-    for _, status in ipairs(sorted(agg)) do
-        local list = agg[status]
-        local tag = xml_tag(status)
-        w.open(4, tag)
-        w.leaf(5, 'count', #list)
-        for _, l in ipairs(list) do
-            w.open(5, 'landing')
-            if multi then w.leaf(6, 'fight', l.fight) end
-            w.leaf(6, 'time', fmt(l.t))
-            w.leaf(6, 'via', l.via)
-            w.leaf(6, 'wore_off', fmt(l.off))
-            w.close(5, 'landing')
-        end
-        w.close(4, tag)
-    end
-    w.close(3, 'debuffs_landed')
-end
-
--- ==[ XML Debuffs Taken ]=====================================
-local function write_taken(w, per, kills, multi)
-    local agg = {}
-    for fi = 1, #kills do
-        local p = per[fi]
-        if p then
-            for status, list in pairs(p.taken) do
-                local a = agg[status]
-                if not a then
-                    a = {seconds = 0, longest = 0, list = {}}
-                    agg[status] = a
-                end
-                for _, inst in ipairs(list) do
-                    local len = inst.off - inst.on
-                    a.seconds = a.seconds + len
-                    a.longest = math.max(a.longest, len)
-                    a.list[#a.list + 1] = {fight = fi, on = inst.on, off = inst.off, len = len, via = inst.via}
-                end
-            end
-        end
-    end
-    if not next(agg) then return end
-    w.open(3, 'debuffs_taken')
-    for _, status in ipairs(sorted(agg)) do
-        local a = agg[status]
-        local tag = xml_tag(status)
-        w.open(4, tag)
-        w.leaf(5, 'count', #a.list)
-        w.leaf(5, 'seconds', fmt(a.seconds))
-        w.leaf(5, 'longest', fmt(a.longest))
-        for _, inst in ipairs(a.list) do
-            w.open(5, 'instance')
-            if multi then w.leaf(6, 'fight', inst.fight) end
-            w.leaf(6, 'on', fmt(inst.on))
-            w.leaf(6, 'off', fmt(inst.off))
-            w.leaf(6, 'length', fmt(inst.len))
-            w.leaf(6, 'via', inst.via)
-            w.close(5, 'instance')
-        end
-        w.close(4, tag)
-    end
-    w.close(3, 'debuffs_taken')
-end
-
--- ==[ XML Job Abilities ]=====================================
-local function write_abilities(w, per, kills, multi)
-    local agg = {}
-    for fi = 1, #kills do
-        local p = per[fi]
-        if p then
-            for ability, times in pairs(p.abilities) do
-                agg[ability] = agg[ability] or {}
-                for _, t in ipairs(times) do
-                    agg[ability][#agg[ability] + 1] = {fight = fi, t = t}
-                end
-            end
-        end
-    end
-    if not next(agg) then return end
-    w.open(3, 'abilities')
-    for _, ability in ipairs(sorted(agg)) do
-        local list = agg[ability]
-        local tag = xml_tag(ability)
-        w.open(4, tag)
-        w.leaf(5, 'count', #list)
-        for _, u in ipairs(list) do
-            w.open(5, 'use')
-            if multi then w.leaf(6, 'fight', u.fight) end
-            w.leaf(6, 'time', fmt(u.t))
-            w.close(5, 'use')
-        end
-        w.close(4, tag)
-    end
-    w.close(3, 'abilities')
-end
-
--- ==[ XML Boss ]==============================================
-local function write_boss(w, key, kills)
-    local multi = #kills > 1
-    local total = 0
-    for _, k in ipairs(kills) do total = total + k.length end
-
-    local boss_tag = xml_tag(key)
-    w.open(1, boss_tag)
-    write_fight(w, kills, total)
-    write_boss_debuffs(w, kills, total, multi)
-
-    local players = {}
-    for fi, k in ipairs(kills) do
-        for name, p in pairs(k.players) do
-            players[name] = players[name] or {}
-            players[name][fi] = p
-        end
-    end
-    for _, name in ipairs(sorted(players)) do
-        local per = players[name]
-        local present = 0
-        for fi in pairs(per) do present = present + kills[fi].length end
-        local tag = xml_tag(name)
-        w.open(2, tag)
-        write_buffs(w, per, kills, present, multi)
-        write_landed(w, per, kills, multi)
-        write_taken(w, per, kills, multi)
-        write_abilities(w, per, kills, multi)
-        w.close(2, tag)
-    end
-    w.close(1, boss_tag)
-end
-
--- ==[ Commands ]==============================================
-local function export(name)
-    name = name and (name:gsub('[\\/:%*%?"<>|]', '_')) or os.date('%Y-%m-%d')
-
-    local data_dir = windower.addon_path..'data/'
-    local base = data_dir..'export/'
-    if not windower.dir_exists(data_dir) then windower.create_dir(data_dir) end
-    if not windower.dir_exists(base) then windower.create_dir(base) end
-
-    local final, n = name, 1
-    while windower.file_exists(base..final..'.xml') do
-        n = n + 1
-        final = name..'_'..n
-    end
-
+    local name = p['Name']
+    if not (p['ID'] and name and name ~= '') then return end
+    names_by_id[p['ID']] = name
+    local job = p['Main job'] and res.jobs[p['Main job']]
+    if job and job.ens and job.ens ~= 'NON' then jobs[name] = job.ens end
     local now = os.clock()
-    local keys = {}
-    for k in pairs(db) do keys[k] = true end
-    for _, f in pairs(fights) do keys[f.key] = true end
-
-    local w = writer()
-    w.open(0, 'database')
-    for _, key in ipairs(sorted(keys)) do
-        local kills = {}
-        if db[key] then
-            for _, k in ipairs(db[key].kills) do kills[#kills + 1] = k end
-        end
-        for _, f in pairs(fights) do
-            if f.key == key then kills[#kills + 1] = build_result(f, now, 'in progress') end
-        end
-        write_boss(w, key, kills)
-    end
-    w.close(0, 'database')
-
-    local file = io.open(base..final..'.xml', 'w+')
-    if not file then
-        log('Could not write '..final..'.xml')
-        return
-    end
-    file:write(w.text())
-    file:close()
-
-    log('Exported '..final..'.xml')
+    if p['TP'] then tp_sample(name, p['TP'], now) end
+    if p['HP'] == 0 and party[name] and party_mobs[name] then player_died(name, now) end
 end
 
-local function reset()
-    flush_hits()
+-- ==[ Run Control ]===========================================
+local function end_run()
+    for id, f in pairs(fights) do end_fight(id, f.last, false) end
+    local count, kills, deaths = 0, 0, 0
+    for _, e in pairs(db) do
+        for _, k in ipairs(e.kills) do
+            count = count + 1
+            deaths = deaths + k.deaths
+            if k.outcome == 'killed' then kills = kills + 1 end
+        end
+    end
+    if count > 0 then
+        local now = os.time()
+        put('run', run_name, os.date('%H:%M:%S', run_wall), os.date('%H:%M:%S', now), clock(now - run_wall), count, kills, deaths)
+    end
+    flush_all()
+    if run_dir then log('Run saved to data/runs/'..run_name) end
     db = {}
     fights = {}
     boss_status = {}
     boss_stamps = {}
     luopans = {}
-    hit_file = nil
-    hit_name = nil
-    hit_rows = 0
+    dead_players = {}
+    last_hit_on = {}
+    last_view = nil
+    bufs = {}
+    made = {}
+    run_dir = nil
+    run_name = nil
     packet_seq = 0
+    run_wall = os.time()
     prune()
-    log('Reset.')
-    coroutine.schedule(function()
-        windower.send_command('parse reset')
-    end, parse_delay)
+    if update_hud then update_hud() end
 end
 
-local function show_status()
-    local any = false
-    for _, f in pairs(fights) do
-        any = true
-        log(f.name..': in progress, '..clock(os.clock() - f.start))
+-- ==[ HUD ]===================================================
+local function color(r, g, b, s)
+    return string.format('\\cs(%d,%d,%d)%s\\cr', r, g, b, s)
+end
+
+local function ranked(stats)
+    local list = {}
+    for name, s in pairs(stats) do list[#list + 1] = {name = name, damage = s.damage} end
+    table.sort(list, function(x, y) return x.damage > y.damage end)
+    return list
+end
+
+local function debuff_line(id)
+    local out = {}
+    local b = boss_status[id] or {}
+    for _, status in ipairs(sorted(b)) do
+        local rec = b[status]
+        if rec.open then
+            local l = rec.landings[#rec.landings]
+            if l and l.level then
+                out[#out + 1] = status..' '..l.level
+            else
+                out[#out + 1] = (l and l.via) or status
+            end
+        end
     end
-    for _, key in ipairs(sorted(db)) do
-        any = true
-        local e = db[key]
-        local total = 0
-        for _, k in ipairs(e.kills) do total = total + k.length end
-        log(string.format('%s: %d fight%s, %s', e.name, #e.kills, #e.kills == 1 and '' or 's', clock(total)))
+    return table.concat(out, ', ')
+end
+
+local function missing_line()
+    local out = {}
+    for _, name in ipairs(sorted(party)) do
+        if is_melee(name) and current[name] then
+            local have = {}
+            for _, id in ipairs(current[name]) do
+                local n = status_name(id)
+                if n then have[n] = true end
+            end
+            local gone = {}
+            for _, w in ipairs(hud_watch) do
+                local ok = false
+                for _, s in ipairs(w[2]) do
+                    if have[s] then ok = true end
+                end
+                if not ok then gone[#gone + 1] = w[1] end
+            end
+            if #gone > 0 then out[#out + 1] = name..' '..table.concat(gone, '/') end
+        end
     end
-    if not any then log('No boss data.') end
-    if not hit_log then
-        log('Hit log: off')
-    elseif hit_rows > 0 then
-        flush_hits()
-        log(string.format('Hit log: %s, %d row%s', hit_name, hit_rows, hit_rows == 1 and '' or 's'))
+    return table.concat(out, ', ')
+end
+
+local function player_lines(lines, stats, len)
+    local total = 0
+    for _, s in pairs(stats) do total = total + s.damage end
+    lines[#lines + 1] = string.format('Party %s  %s DPS', short(total), short(per(total, math.max(len, 1))))
+    for _, e in ipairs(ranked(stats)) do
+        lines[#lines + 1] = string.format(' %-12s %8s %3d%% %7s', e.name, short(e.damage), math.floor(pct(e.damage, total) + 0.5),
+            short(per(e.damage, math.max(len, 1))))
     end
 end
 
-local function help()
-    log('export [name] : write XML, named by date if no name is given')
-    log('reset : clear data and run parse reset')
-    log('status : list tracked boss fights')
+update_hud = function()
+    if not hud then return end
+    if not hud_on then
+        hud:hide()
+        return
+    end
+    local now = os.clock()
+    local lines = {}
+    local f = current_fight()
+    if f then
+        local len = now - f.start
+        local m = windower.ffxi.get_mob_by_id(f.id)
+        local hp = m and m.hpp and ('  HP '..m.hpp..'%') or ''
+        lines[1] = color(255, 200, 80, 'Extraparse')..'  '..f.name..'  '..clock(len)..hp
+        player_lines(lines, f.stats, len)
+        local d = debuff_line(f.id)
+        if d ~= '' then lines[#lines + 1] = 'Boss: '..d end
+        local miss = missing_line()
+        if miss ~= '' then lines[#lines + 1] = color(255, 110, 110, 'Missing: '..miss) end
+        local down = sorted(dead_players)
+        if #down > 0 then lines[#lines + 1] = color(255, 110, 110, 'Dead: '..table.concat(down, ', ')) end
+    elseif last_view then
+        local r = last_view.r
+        lines[1] = color(255, 200, 80, 'Extraparse')..'  '..last_view.f.name..'  '..clock(r.length)..'  '..r.outcome
+        player_lines(lines, last_view.f.stats, r.length)
+    else
+        lines[1] = color(255, 200, 80, 'Extraparse')..'  waiting for a boss'
+    end
+    hud:text(table.concat(lines, '\n'))
+    hud:show()
+end
+
+local function build_hud()
+    if hud then hud:destroy() end
+    hud = texts.new('', settings.hud, settings)
+    update_hud()
+end
+
+-- ==[ Report ]================================================
+local function report()
+    local f = current_fight()
+    local r
+    if f then
+        r = build_result(f, os.clock(), 'in progress')
+    elseif last_view then
+        f, r = last_view.f, last_view.r
+    else
+        log('No boss fight to report yet.')
+        return
+    end
+    local len = r.length
+    local total = party_total(f)
+    local lines = {}
+    lines[1] = string.format('Extraparse | %s %s %s | Party %s, %s DPS', f.name, clock(len), r.outcome, short(total), short(per(total, math.max(len, 1))))
+
+    local row = {}
+    for i, e in ipairs(ranked(f.stats)) do
+        row[#row + 1] = string.format('%d. %s %s %d%%', i, e.name, short(e.damage), math.floor(pct(e.damage, total) + 0.5))
+        if #row == 3 then
+            lines[#lines + 1] = table.concat(row, ' | ')
+            row = {}
+        end
+    end
+    if #row > 0 then lines[#lines + 1] = table.concat(row, ' | ') end
+
+    local debuffs = {}
+    for status, d in pairs(r.debuffs) do debuffs[#debuffs + 1] = {status = status, up = pct(d.seconds, len)} end
+    table.sort(debuffs, function(x, y) return x.up > y.up end)
+    local parts = {}
+    for i = 1, math.min(6, #debuffs) do
+        parts[#parts + 1] = string.format('%s %d%%', debuffs[i].status, math.floor(debuffs[i].up + 0.5))
+    end
+    if #parts > 0 then lines[#lines + 1] = 'Boss: '..table.concat(parts, ' | ') end
+
+    for _, w in ipairs(hud_watch) do
+        local parts = {}
+        for _, name in ipairs(sorted(r.players)) do
+            if is_melee(name) then
+                local best = 0
+                for _, s in ipairs(w[2]) do
+                    local b = r.players[name].buffs[s]
+                    if b then best = math.max(best, pct(b.seconds, len)) end
+                end
+                parts[#parts + 1] = string.format('%s %d%%', name, math.floor(best + 0.5))
+            end
+        end
+        if #parts > 0 then lines[#lines + 1] = w[1]..': '..table.concat(parts, ' | ') end
+    end
+
+    if #f.deaths > 0 then
+        local parts = {}
+        for _, d in ipairs(f.deaths) do
+            parts[#parts + 1] = d.cause and (d.name..' ('..d.cause..')') or d.name
+        end
+        lines[#lines + 1] = 'Deaths: '..table.concat(parts, ', ')
+    end
+
+    for i, line in ipairs(lines) do
+        coroutine.schedule(function()
+            windower.chat.input('/p '..line)
+        end, 0.1 + (i - 1) * line_delay)
+    end
 end
 
 -- ==[ Events ]================================================
@@ -1366,49 +1677,78 @@ windower.register_event('prerender', function()
         sync_self(self_pending)
         self_pending = nil
     end
+    if now - last_tp >= 0.1 then
+        last_tp = now
+        local me = windower.ffxi.get_player()
+        if me and me.name and me.vitals then tp_sample(me.name, me.vitals.tp, now) end
+    end
     if now - last_flush >= flush_interval then
         last_flush = now
-        flush_hits()
+        flush_all()
     end
     if now - last_tick < 1 then return end
     last_tick = now
     refresh_party()
     check_luopans(now)
+    for name, m in pairs(party) do
+        if party_mobs[name] then
+            if m.hpp == 0 then
+                player_died(name, now)
+            elseif m.hpp and m.hpp > 0 and dead_players[name] then
+                player_up(name, now)
+            end
+        end
+    end
     for id, f in pairs(fights) do
         for n in pairs(party) do f.roster[n] = true end
+        local m = windower.ffxi.get_mob_by_id(id)
+        if m and m.hpp and m.hpp ~= f.hp_last then
+            f.hp_last = m.hpp
+            put('boss_hp', f.key, f.index, f2(now - f.start), m.hpp)
+        end
         if now - f.last > idle_timeout then end_fight(id, f.last, false) end
     end
+    update_hud()
 end)
 
-windower.register_event('zone change', function()
+windower.register_event('zone change', function(new_id, old_id)
     local now = os.clock()
     for id, f in pairs(fights) do end_fight(id, f.last, false) end
     for name in pairs(timeline) do close_player(name, now) end
     luopans = {}
-    flush_hits()
+    flush_all()
     prune()
     self_pending = now
+    if sortie_zones[old_id] and not sortie_zones[new_id] then
+        end_run()
+    elseif sortie_zones[new_id] and not sortie_zones[old_id] then
+        end_run()
+        log('Entered Sortie, tracking started.')
+    end
 end)
 
 windower.register_event('load', 'login', function()
     refresh_party()
     self_pending = os.clock()
+    local info = windower.ffxi.get_info()
+    if info and info.logged_in then build_hud() end
 end)
 
-windower.register_event('logout', 'unload', function()
-    flush_hits()
+windower.register_event('logout', function()
+    end_run()
+    if hud then hud:hide() end
 end)
 
-windower.register_event('addon command', function(cmd, ...)
+windower.register_event('unload', function()
+    end_run()
+    if hud then hud:destroy() end
+end)
+
+windower.register_event('addon command', function(cmd)
     cmd = cmd and cmd:lower() or 'help'
-    local args = {...}
-    if cmd == 'export' then
-        export(args[1])
-    elseif cmd == 'reset' then
-        reset()
-    elseif cmd == 'status' then
-        show_status()
+    if cmd == 'report' then
+        report()
     else
-        help()
+        log('report : post the last boss fight to party chat')
     end
 end)

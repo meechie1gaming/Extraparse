@@ -1,218 +1,192 @@
 # Extraparse
 
-Windower 4 addon for FFXI. Runs alongside Parse in Sortie and tracks what Parse doesn't: buff uptime for your whole party, debuffs on the boss, debuffs the boss puts on players, and every job ability used. Data is kept per boss, keyed by mob name the same way Parse does it, so the two exports line up.
+Windower 4 addon for FFXI. An all-in-one parser for Sortie bosses: damage, defense, buff and debuff uptime, boss moves, deaths and more, for your whole party, saved as a folder of CSV tables after every run.
 
-It also writes a per-hit damage log: every hit on a boss, stamped with the attacker's buffs and the boss's debuffs at that moment, for damage attribution tools.
-
-Only you need to run it. It tracks your whole party from your client.
+There's nothing to set up or remember. Load it, run Sortie, and the run is saved when you leave.
 
 **Author:** Meechie
-**Version:** 1.1.0
+**Version:** 2.0.0
 
 ## Install
 
 1. Copy the `Extraparse` folder into `Windower/addons/`.
-2. Load Parse if it isn't already: `//lua load parse`
-3. In game: `//lua load extraparse`
+2. In game: `//lua load extraparse`
 
 To load it every time, add `lua load extraparse` to `Windower/scripts/init.txt`.
 
-## Commands
+Parse isn't needed for Sortie bosses. Keep it loaded if you parse other content.
+
+## How a Run Works
+
+1. Load the addon. The HUD shows up and tracking starts.
+2. Zone into Sortie. You'll see "Entered Sortie, tracking started."
+3. Fight bosses as usual. Each fight starts on the first action on the boss and ends when it dies. After a 90 second lull (a wipe), the fight closes as "not killed".
+4. Leave Sortie. Everything is saved to `data/runs/<date>/` and you'll see "Run saved to data/runs/2026-10-28".
+
+- Moving between Sortie floors doesn't end the run.
+- A second run the same day goes in `2026-10-28_2`, and so on. Nothing is overwritten.
+- Hits, damage taken, boss moves, deaths and boss HP are written as they happen, every second. A boss's summary tables are written the moment it dies. A crash loses at most the last second, plus the summary for a fight still in progress.
+- Logging out or unloading the addon also saves the run.
+
+## HUD
+
+During a fight:
+
+```
+Extraparse  Aita  2:31  HP 63%
+Party 4.12M  27.3k DPS
+ Meechie         1.42M  34%    9.4k
+ Romulis         1.10M  27%    7.3k
+ Kekia          812.0k  20%    5.4k
+Boss: Dia III, Distract III, Geo-Frailty, Sluggish Daze 5
+Missing: Romulis Haste
+Dead: Bard
+```
+
+- **Boss** lists the debuffs up on the boss right now, by the spell that landed them.
+- **Missing** lists melee party members without Haste or a March.
+- **Dead** lists who's down.
+- Between fights it shows the last fight's result.
+- Drag it to move it. The position is saved.
+
+## Command
 
 | Command | What it does |
 | --- | --- |
-| `//ep export` | Writes the Extraparse file under today's date, like `2026-10-27` |
-| `//ep export <name>` | Same, using your own name |
-| `//ep reset` | Clears all Extraparse data and runs `parse reset` |
-| `//ep status` | Lists fights in progress and finished bosses with fight counts and total time, plus the current hit log file and row count |
+| `//ep report` | Posts the current or last boss fight to party chat |
 
-- Export Parse separately with `//parse export` as usual. `//ep export` only writes the Extraparse file.
-- `//ep` with no command shows the help list. `//extraparse` works in place of `//ep`.
-- If a file with that name already exists, the new one gets `<name>_2`, `<name>_3` and so on. Nothing is overwritten.
-- In a macro, use `/console ep export` and `/console ep reset`.
+In a macro: `/console ep report`. There are no other commands.
+
+The report looks like this:
+
+```
+Extraparse | Aita 4:32 killed | Party 6.21M, 22.9k DPS
+1. Meechie 2.10M 34% | 2. Romulis 1.80M 29% | 3. Kekia 1.21M 19%
+Boss: Dia 97% | Geo-Frailty 95% | Evasion Down 88% | Elegy 92%
+Haste: Meechie 100% | Romulis 92%
+March: Meechie 98% | Romulis 95%
+Deaths: Bard (Mangle)
+```
 
 ## Bosses Tracked
 
 Aita, Degei, Dhartok, Gartell, Ghatjot, Leshonn, Skomora, Triboulex. Every other mob is ignored.
 
-## How It Works
+## Run Folder
 
-**Fight window**
-- A fight starts on the first action anyone takes on the boss, or the boss takes on anyone.
-- It ends when the boss dies, from the death message in the action packets. Your engaged status isn't used.
-- If nothing involving the boss happens for 90 seconds (a wipe), or you zone, the fight closes as "not killed" at the last action seen.
-- A dead boss can't start a new fight for 60 seconds, so late packets on the corpse are ignored.
+Every table has `boss` and `fight` columns. `fight` counts fights against that boss within the run, so a second Aita pull is fight 2. Times are seconds from the start of that fight. One folder is one run, ready to hand to a dashboard.
 
-**Buffs** (everyone in your party)
-- Your own buffs come from your buff list. Everyone else's come from the party buff packet (0x076).
-- For each buff: uptime %, seconds up, how many times it dropped mid-fight, and the longest gap without it.
-- The longest gap counts from the pull to the first time it went up, and from the last drop to the end of the fight.
-- Who cast it is filled in whenever the action packet shows it landing, including rolls and self-buff job abilities. Prebuffs show with a negative time.
-- Geomancy bubble effects have their own status in game, so they show with a `Geo` prefix (`Geo Attack Boost`, `Geo Haste`) and are kept apart from the regular spell versions.
+### Written as they happen
 
-**Debuffs on the boss**
-- Who landed each one, with what spell or ability, when it landed and when it wore off.
-- Uptime % and every window it was up.
-- Steps show as their daze (Box Step is Sluggish Daze, and so on).
-- Dia and Bio overwrite each other, so landing one closes the other.
-- If no wear-off message is seen, it counts as up until the fight ends.
-- Geo bubble debuffs (Geo-Frailty, Geo-Malaise and so on) send no message when they land, so they're tracked from the Geo- cast on the boss until that GEO's luopan despawns.
-
-**Debuffs on players** (Amnesia, Doom, Paralysis, Silence, Sleep, Stun, Terror, Slow, Weight, and the other ailments in the Player Debuffs list)
-- Each instance with when it started, when it ended and how long it lasted.
-- Count, total seconds and longest instance per debuff.
-- The boss ability that caused it, when the action packet shows it.
-
-**Job abilities**
-- Every job ability each party member uses during the fight, with a count and a timestamp for each use, including ones that do no damage.
-- Abilities used before the pull aren't counted.
-
-## Export Format
-
-Laid out like Parse's export: boss, then player, then the buff, debuff or ability. Times are seconds from the start of the fight.
-
-```xml
-<database>
-    <Degei>
-        <fight>
-            <count>1</count>
-            <length>272.4</length>
-            <fight_1>
-                <start>21:04:33</start>
-                <end>21:09:05</end>
-                <length>272.4</length>
-                <result>killed</result>
-            </fight_1>
-        </fight>
-        <debuffs>
-            <Dia>
-                <uptime>95.2</uptime>
-                <seconds>259.3</seconds>
-                <landed>3</landed>
-                <window>
-                    <on>13.1</on>
-                    <off>272.4</off>
-                </window>
-            </Dia>
-        </debuffs>
-        <Meechie>
-            <buffs>
-                <Haste>
-                    <uptime>98.1</uptime>
-                    <seconds>267.2</seconds>
-                    <drops>1</drops>
-                    <longest_gap>5.2</longest_gap>
-                    <cast>
-                        <time>-12.0</time>
-                        <by>Healer</by>
-                        <via>Haste II</via>
-                    </cast>
-                </Haste>
-            </buffs>
-            <debuffs_landed>...</debuffs_landed>
-            <debuffs_taken>...</debuffs_taken>
-            <abilities>
-                <Berserk>
-                    <count>3</count>
-                    <use>
-                        <time>0.0</time>
-                    </use>
-                </Berserk>
-            </abilities>
-        </Meechie>
-    </Degei>
-</database>
-```
-
-| Section | Where | What's in it |
+| File | One row per | Columns |
 | --- | --- | --- |
-| `fight` | Under the boss | Fight count, total length, and start, end, length and result for each fight |
-| `debuffs` | Under the boss | Uptime %, seconds, times landed and each window, per debuff |
-| `buffs` | Under a player | Uptime %, seconds, drops, longest gap and each cast, per buff |
-| `debuffs_landed` | Under a player | Each debuff that player landed on the boss: time, spell or ability, and when it wore off |
-| `debuffs_taken` | Under a player | Each debuff the player had: count, seconds, longest, and every instance |
-| `abilities` | Under a player | Count and time of each use, per job ability |
+| `hits.csv` | Damage event on a boss | time, attacker, pet, type, action, damage, crit, miss, burst, tp, packet, buffs, debuffs |
+| `taken.csv` | Boss attack on a party member | time, player, type, source, damage, result, effect, buffs |
+| `boss_moves.csv` | Boss TP move or spell | time, move, type, targets, players_hit, damage, effects |
+| `enfeebles.csv` | Debuff attempt on a boss | time, caster, action, debuff, result |
+| `deaths.csv` | Death, raise cast or get-up | time, player, event, by, detail |
+| `boss_hp.csv` | Change in boss HP % | time, hpp |
 
-- `result` is `killed`, `not killed` or `in progress` (exported mid-fight).
-- The boss-level sections (`fight`, `debuffs`) are lowercase and player names are capitalized, so they never collide.
-- Debuffs use the game's status name. Gravity shows as `Weight` and Distract as `Evasion Down`. The spell that landed it is in `via`.
-- Names with spaces use underscores, and characters XML doesn't allow in tag names are dropped (Fighter's Roll becomes `Fighters_Roll`).
+### Written when a fight ends
 
-## Using It With Parse
+| File | One row per | Columns |
+| --- | --- | --- |
+| `fights.csv` | Fight | start, end, length, result, party_damage, party_dps, deaths |
+| `damage.csv` | Player per fight | damage, dps, share, then melee, ranged, WS, JA, spell, burst, skillchain, additional effect, pet and counter breakdowns (see below) |
+| `defense.csv` | Player per fight | damage_taken, melee_taken, ability_taken, spell_taken, melee_attacks, hits, crits, blocks, parries, evades, shadows, anticipates, counters, ability_hits, resists, effects |
+| `buff_summary.csv` | Buff per player per fight | uptime, seconds, drops, longest_gap |
+| `buff_windows.csv` | Stretch a buff was up | player, buff, on, off, dropped |
+| `buff_casts.csv` | Buff landing seen | time, player, buff, by, via, value |
+| `debuff_summary.csv` | Boss debuff per fight | uptime, seconds, landed |
+| `debuff_windows.csv` | Stretch a boss debuff was up | debuff, on, off, by, via, level |
+| `debuffs_taken.csv` | Debuff on a player | player, debuff, on, off, length, via |
+| `abilities.csv` | Job ability use | time, player, ability |
+| `run.csv` | Run | run, start, end, length, fights, kills, deaths |
 
-The boss names in both files are the same, so DPS for a player is their total damage from Parse divided by `fight/length` from Extraparse.
+### Column notes
 
-If you kill the same boss more than once before a reset, both addons merge the kills under one boss. `length` is then the total of all fights, and each timestamped entry gets a `fight` number.
+**hits.csv**
+- `attacker` is the party member. For pets it's the owner, and `pet` has the pet's name.
+- `type` is `melee`, `ranged`, `ws`, `ja`, `spell`, `skillchain`, `add_effect`, `pet_ability`, `item`, `counter`, `spikes` or `retaliation`.
+- `action` is `Main`, `Off-hand`, `Kick` or `Daken` for melee. Otherwise it's the weapon skill, spell, ability or skillchain name.
+- `damage` is 0 on a miss. HP drained counts as damage.
+- `crit`, `miss` and `burst` are 1 or 0.
+- `tp` is the TP the weapon skill went off at. It's only filled for weapon skills.
+- `packet` is shared by rows from the same action: one melee round, or a weapon skill and the skillchain it closed.
 
-## Hit Log
+**taken.csv**
+- `result` is one of `hit`, `crit`, `block`, `parry`, `evade`, `shadow`, `anticipate`, `counter`, `intimidate`, `miss`, `resist`, `no_effect`, `effect` or `dispel`.
+- `effect` is the debuff it put on the player.
 
-Every damage event on a boss goes to a CSV file in `data/hits/`, one row per hit. It runs on its own. There's nothing to export.
+**deaths.csv**
+- `event` is `died`, `raise` or `up`.
+- For `died`, `by` is the boss and `detail` is what killed them: the last thing that hit them within 10 seconds, or Doom.
+- For `raise`, `by` is the caster and `detail` is the spell.
+- For `up`, `detail` is the seconds they were dead.
 
-- A new file starts the first time a boss is hit after loading the addon or running `//ep reset`. It's named by date like the XML export: `2026-10-28.csv`, then `2026-10-28_2.csv` for the next one that day.
-- Rows are written as they happen, flushed to disk every second. If the game crashes, everything up to the last second is already saved.
-- `//ep status` shows which file is being written and how many rows it has.
+**enfeebles.csv**
+- `result` is `landed`, `resisted`, `immunobreak` or `no_effect`.
+- Steps show as their daze with the level, like `Sluggish Daze 3`.
 
-### Columns
-
-| Column | What it is |
-| --- | --- |
-| `target` | Boss name, same key as the XML and Parse |
-| `fight` | Which fight against that boss, matching `fight_N` in the XML export from the same session |
-| `time` | Seconds from the start of the fight, same clock as the XML |
-| `attacker` | Party member who did the damage. For pets this is the owner |
-| `pet` | Pet name when a pet did the damage (Wyvern, automaton, avatar), otherwise empty |
-| `type` | `melee`, `ranged`, `ws`, `ja`, `spell`, `skillchain`, `add_effect`, `pet_ability`, `item`, `counter`, `spikes` or `retaliation` |
-| `action` | `Main`, `Off-hand`, `Kick` or `Daken` for melee. Otherwise the weapon skill, spell, ability or skillchain name (`Light`, `Darkness` and so on) |
-| `damage` | Damage dealt. 0 on a miss. HP drained counts as damage |
-| `crit` | 1 for a critical hit, melee or ranged |
-| `miss` | 1 for a miss, dodge, parry, evade or shadow |
-| `burst` | 1 for a magic burst |
-| `packet` | Rows with the same number came from the same action: one melee round, or a weapon skill and the skillchain it closed |
-| `buffs` | Attacker's buffs at that moment, separated by `;` |
-| `debuffs` | Boss debuffs at that moment, separated by `;` |
-
-```
-target,fight,time,attacker,pet,type,action,damage,crit,miss,burst,packet,buffs,debuffs
-Aita,1,3.00,Meechie,,ws,Upheaval,18000,0,0,0,5,Chaos Roll(11);Geo Attack Boost;Haste(Haste II);March(Honor March);March(Victory March),Dia(Dia III);Geo-Frailty;Sluggish Daze(3)
-Aita,1,3.00,Meechie,,skillchain,Light,9000,0,0,0,5,Chaos Roll(11);Geo Attack Boost;Haste(Haste II);March(Honor March);March(Victory March),Dia(Dia III);Geo-Frailty;Sluggish Daze(3)
-Aita,1,3.00,Kekia,,spell,Thunder V,22000,0,0,1,6,Geo Attack Boost,Dia(Dia III);Geo-Frailty;Sluggish Daze(3)
-Aita,1,3.00,Romulis,Wyvern,melee,Main,300,0,0,0,7,,Dia(Dia III);Geo-Frailty;Sluggish Daze(3)
-```
+**damage.csv**
+- Melee: hits, misses, crits, accuracy, crit_rate, rounds and hits_per_round.
+- Ranged: hits, misses and crits.
+- WS: count, misses, average, max and average TP.
+- Spells: damage and casts. Bursts: count and damage.
+- Skillchains: damage and count.
+- Pet damage is counted in the owner's total and also shown on its own.
 
 ### Buff and Debuff Stamps
 
-- Each entry is the status name, with the detail in brackets when it's known: the song or spell that gave it (`March(Honor March)`, `Haste(Haste II)`), the roll total (`Chaos Roll(11)`), or the daze level (`Sluggish Daze(3)`).
-- A status with no bracket was seen but not who or what gave it, usually because it landed out of range or before the addon loaded.
-- Stacked copies of the same status each get their own entry, so two Marches show as two entries. The uptime numbers in the XML count them as one.
-- Stamps show the state before the hit lands. A weapon skill that applies a debuff doesn't get stamped with its own debuff.
-- Skillchain rows go to whoever closed the chain and carry their buffs.
-- Pet rows have no buffs, since pets aren't in the party buff packet.
-- The stamp is the buff being active, not its strength. Song and spell potency from gear and merits isn't in the packets.
+The `buffs` and `debuffs` columns in `hits.csv` and `taken.csv` show what was active at that moment, separated by `;`:
 
-### File Size
+```
+Chaos Roll(11);Geo Attack Boost;Haste(Haste II);March(Honor March);March(Victory March)
+Dia(Dia III);Evasion Down(Distract III);Geo-Frailty;Sluggish Daze(5)
+```
 
-With stamps on, a row is about 550 bytes. A 5 minute boss with three melee comes to roughly 2,000 rows, about 1.2 MB. A full 8-boss run is about 10 MB. With `stamp_buffs` off, rows drop to about 60 bytes and a run is about 1 MB. The analysis tool can still match hits to buff windows from the XML by `target`, `fight` and `time`.
+- The bracket shows the song or spell that gave it, the roll total, or the daze level, when it's known.
+- A status with no bracket was seen, but not who or what gave it.
+- Stacked copies each get their own entry, so two Marches show twice.
+- Stamps show the state before the hit lands.
+- Pet hits have no buffs, since pets aren't in the party buff packet.
+- The stamp shows the buff is up, not how strong it is. Potency from gear and merits isn't in the packets.
+
+### Names
+
+- Debuffs use the game's status name. Gravity shows as `Weight` and Distract as `Evasion Down`. The `via` column has the spell.
+- Geomancy bubble effects have their own status in game, so they show as `Geo Attack Boost`, `Geo Haste` and so on, separate from regular spell buffs.
+- Geo bubble debuffs on the boss send no message, so they're tracked from the Geo- cast until the luopan despawns.
+
+### Size
+
+With stamps on, a full 8-boss run is about 10 MB. With `stamp_buffs` off it's about 1 MB.
 
 ## Settings
 
 Set at the top of `Extraparse.lua`:
 
 - `bosses`: which mob names count as bosses
+- `sortie_zones`: zone IDs that count as Sortie (133, 189, 275)
 - `idle_timeout`: seconds without boss actions before a fight closes as not killed (default 90)
 - `cast_lead`: seconds a cast can come before the buff or debuff shows up and still be matched to it (default 3)
 - `dead_window`: seconds a dead boss can't start a new fight (default 60)
-- `parse_delay`: seconds after an Extraparse reset before `parse reset` runs (default 1)
-- `player_debuffs`: which statuses go under `debuffs_taken` instead of `buffs`
-- `hit_log`: write the per-hit CSV (default true)
-- `stamp_buffs`: fill the `buffs` and `debuffs` columns (default true)
-- `flush_interval`: seconds between writes to the hit log (default 1)
-- `luopan_grace`: seconds to wait for a luopan to show up after a Geo- cast before dropping the Geo debuff (default 5)
+- `flush_interval`: seconds between writes to the run folder (default 1)
+- `luopan_grace`: seconds to wait for a luopan after a Geo- cast before dropping the Geo debuff (default 5)
+- `line_delay`: seconds between report lines in party chat (default 1.5)
+- `stamp_buffs`: fill the buffs and debuffs columns (default true)
+- `hud_on`: show the HUD (default true)
+- `hud_watch`: what the HUD's Missing line checks for. Each entry is a label and the statuses that count
+- `melee_jobs`: which jobs the Missing line and the report's Haste and March lines cover
+- `player_debuffs`: which statuses count as debuffs on players instead of buffs
+
+The HUD position and look are saved in `data/settings.xml`.
 
 ## Limits
 
 - Your own party only. Alliance members aren't tracked.
 - Only what happens in range of your character, since that's all the game sends you.
-- After loading mid-session, other players' buffs show up after their next buff change, because that's when the game sends the party buff packet.
-- Data is kept in memory until you export. Reloading the addon clears it. The hit log is already on disk and isn't affected.
-- Geo bubble debuffs on the boss assume the boss stays inside the luopan's area. Indi- debuffs on the boss (from the GEO's own aura) can't be seen at all.
-- Party members' buff changes reach you through the party buff packet, which can trail the actual change by a moment, so a hit right at a buff change can be stamped with the old state.
+- Other players' buffs come from the party buff packet, which can trail a change by a moment. After loading mid-run, their buffs show up after their next buff change.
+- Jobs come from the party update packet, so the Missing line fills in once each member's job has been seen.
+- TP at weapon skill is the highest TP seen for that player in the 3 seconds before it. Your own is exact. Other players' depends on how recently the game sent their TP.
+- Geo bubble debuffs on the boss assume the boss stays inside the luopan's area. Indi- debuffs on the boss can't be seen.
